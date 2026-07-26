@@ -1,0 +1,193 @@
+/**
+ * Neomorphic (soft-UI) design tokens for Kafka Pipeline Architect.
+ * Source palette: #100E34 (ink), #4F48EC (indigo), #FFBF18 (amber), #FFFFFF.
+ * Light/dark values and shadow recipes are ported 1:1 from the approved
+ * design in UIfrontend_overhaul/.
+ */
+
+:root,
+:root[data-theme='light'] {
+  --ink: #100e34;
+  --indigo: #4f48ec;
+  --indigo-soft: rgba(79, 72, 236, 0.14);
+  --indigo-softer: rgba(79, 72, 236, 0.07);
+  --amber: #ffbf18;
+  --amber-soft: rgba(255, 191, 24, 0.18);
+  --success: #5fa98a;
+  --success-soft: rgba(95, 169, 138, 0.16);
+  --error: #d9645b;
+  --error-soft: rgba(217, 100, 91, 0.14);
+
+  --page-bg: #eae8f4;
+  --surface: #f0eff7;
+  --surface-sunken: #e7e5f3;
+  --shadow-light: rgba(255, 255, 255, 0.9);
+  --shadow-dark: rgba(16, 14, 52, 0.16);
+  --hairline: rgba(16, 14, 52, 0.07);
+
+  --text-primary: #100e34;
+  --text-secondary: rgba(16, 14, 52, 0.62);
+  --text-tertiary: rgba(16, 14, 52, 0.38);
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --ink: #100e34;
+  --indigo: #6e67f5;
+  --indigo-soft: rgba(110, 103, 245, 0.22);
+  --indigo-softer: rgba(110, 103, 245, 0.1);
+  --amber: #ffbf18;
+  --amber-soft: rgba(255, 191, 24, 0.2);
+  --success: #6fbe9c;
+  --success-soft: rgba(111, 190, 156, 0.2);
+  --error: #e8776e;
+  --error-soft: rgba(232, 119, 110, 0.18);
+
+  --page-bg: #17152f;
+  --surface: #221f45;
+  --surface-sunken: #1b1938;
+  --shadow-light: rgba(255, 255, 255, 0.055);
+  --shadow-dark: rgba(0, 0, 0, 0.55);
+  --hairline: rgba(255, 255, 255, 0.07);
+
+  --text-primary: #f3f2fb;
+  --text-secondary: rgba(243, 242, 251, 0.64);
+  --text-tertiary: rgba(243, 242, 251, 0.4);
+
+  color-scheme: dark;
+}
+
+:root {
+  --font-sans: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  /* Spacing scale: 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Corner radii */
+  --radius-pill: 999px;
+  --radius-control: 12px;
+  --radius-card: 20px;
+  --radius-hub: 26px;
+}
+
+/* Falls back to the OS theme before useTheme's first effect run/paint. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --ink: #100e34;
+    --indigo: #6e67f5;
+    --indigo-soft: rgba(110, 103, 245, 0.22);
+    --indigo-softer: rgba(110, 103, 245, 0.1);
+    --amber: #ffbf18;
+    --amber-soft: rgba(255, 191, 24, 0.2);
+    --success: #6fbe9c;
+    --success-soft: rgba(111, 190, 156, 0.2);
+    --error: #e8776e;
+    --error-soft: rgba(232, 119, 110, 0.18);
+
+    --page-bg: #17152f;
+    --surface: #221f45;
+    --surface-sunken: #1b1938;
+    --shadow-light: rgba(255, 255, 255, 0.055);
+    --shadow-dark: rgba(0, 0, 0, 0.55);
+    --hairline: rgba(255, 255, 255, 0.07);
+
+    --text-primary: #f3f2fb;
+    --text-secondary: rgba(243, 242, 251, 0.64);
+    --text-tertiary: rgba(243, 242, 251, 0.4);
+    color-scheme: dark;
+  }
+}
+
+@keyframes pulseGlow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.06);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes dashFlow {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+
+@keyframes stepPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(79, 72, 236, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(79, 72, 236, 0);
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Neomorphic shadow recipes — see UIfrontend_overhaul style guide, section 2. */
+.raised {
+  box-shadow:
+    8px 8px 18px var(--shadow-dark),
+    -8px -8px 18px var(--shadow-light);
+}
+
+.raised-sm {
+  box-shadow:
+    4px 4px 9px var(--shadow-dark),
+    -4px -4px 9px var(--shadow-light);
+}
+
+.pressed {
+  box-shadow:
+    inset 5px 5px 10px var(--shadow-dark),
+    inset -5px -5px 10px var(--shadow-light);
+}
+
+.ring-indigo {
+  box-shadow:
+    8px 8px 18px var(--shadow-dark),
+    -8px -8px 18px var(--shadow-light),
+    0 0 0 3px var(--indigo-soft);
+}
+
+.ring-error {
+  box-shadow:
+    8px 8px 18px var(--shadow-dark),
+    -8px -8px 18px var(--shadow-light),
+    0 0 0 3px var(--error-soft);
+}
+
+.ring-success {
+  box-shadow:
+    8px 8px 18px var(--shadow-dark),
+    -8px -8px 18px var(--shadow-light),
+    0 0 0 2px var(--success-soft);
+}

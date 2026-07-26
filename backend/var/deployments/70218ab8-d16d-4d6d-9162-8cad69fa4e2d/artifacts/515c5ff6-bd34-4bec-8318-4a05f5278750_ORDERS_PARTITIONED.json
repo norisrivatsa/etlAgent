@@ -1,0 +1,8 @@
+{
+  "depends_on": [
+    "ORDERS_RAW"
+  ],
+  "layer": "raw",
+  "object_name": "ORDERS_PARTITIONED",
+  "statement": "CREATE STREAM ORDERS_PARTITIONED AS\n  SELECT *\n  FROM ORDERS_RAW\n  PARTITION BY CAST(order_id AS VARCHAR);"
+}

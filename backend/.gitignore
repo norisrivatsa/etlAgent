@@ -12,3 +12,7 @@ wheels/
 .ruff_cache/
 .venv/
 .python-version
+
+# Environment variables
+.env
+.env.local

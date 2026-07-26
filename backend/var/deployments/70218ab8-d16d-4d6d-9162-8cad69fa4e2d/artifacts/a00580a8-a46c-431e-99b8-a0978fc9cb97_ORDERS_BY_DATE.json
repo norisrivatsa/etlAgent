@@ -1,0 +1,8 @@
+{
+  "depends_on": [
+    "ORDERS_NORMALIZED"
+  ],
+  "layer": "raw",
+  "object_name": "ORDERS_BY_DATE",
+  "statement": "CREATE STREAM ORDERS_BY_DATE AS\n  SELECT *\n  FROM ORDERS_NORMALIZED\n  PARTITION BY order_date;"
+}

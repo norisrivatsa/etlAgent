@@ -1,0 +1,8 @@
+{
+  "depends_on": [
+    "ORDERS_PARTITIONED"
+  ],
+  "layer": "raw",
+  "object_name": "ORDERS_NORMALIZED",
+  "statement": "CREATE STREAM ORDERS_NORMALIZED AS\n  SELECT\n    order_id,\n    customer_id,\n    status,\n    total,\n    TIMESTAMPTOSTRING(ROWTIME, 'yyyy-MM-dd') AS order_date,\n    ROWTIME AS event_ts\n  FROM ORDERS_PARTITIONED;"
+}

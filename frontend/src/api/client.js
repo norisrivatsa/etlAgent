@@ -51,10 +51,17 @@ export const api = {
     return request(`/sessions/${sessionId}/chat-messages?limit=${limit}`)
   },
 
-  async sendChatMessage(sessionId, message) {
+  async sendChatMessage(sessionId, message, artifactId = null) {
     return request(`/sessions/${sessionId}/chat-messages`, {
       method: 'POST',
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, artifact_id: artifactId }),
+    })
+  },
+
+  async starMessage(sessionId, messageId, starred) {
+    return request(`/sessions/${sessionId}/chat-messages/${messageId}/star`, {
+      method: 'POST',
+      body: JSON.stringify({ starred }),
     })
   },
 
@@ -69,6 +76,13 @@ export const api = {
   // Approval
   async approveSession(sessionId, approved, comment = null) {
     return request(`/sessions/${sessionId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approved, comment }),
+    })
+  },
+
+  async approveArtifact(sessionId, artifactId, approved, comment = null) {
+    return request(`/sessions/${sessionId}/artifacts/${artifactId}/approve`, {
       method: 'POST',
       body: JSON.stringify({ approved, comment }),
     })

@@ -54,15 +54,30 @@ class OpenAILLMClient(LLMClient):
         system_prompt: str,
         user_prompt: str,
     ) -> dict[str, Any]:
+        is_reasoning_model = config.model.startswith(("gpt-5", "o1", "o3", "o4"))
+        max_output_tokens = config.max_tokens
+        if is_reasoning_model:
+            # Reasoning models spend part of max_output_tokens on invisible reasoning
+            # tokens before any visible completion text — without a generous floor,
+            # verbose JSON (e.g. KsqlDBAgent's multi-statement pipeline) gets silently
+            # truncated mid-string well below the nominal budget.
+            max_output_tokens = max(config.max_tokens, 8192)
+        kwargs: dict[str, Any] = {
+            "model": config.model,
+            "instructions": system_prompt,
+            # text.format=json_object requires the word "json" to appear in the input
+            # itself (not just instructions) — user_prompt is a raw JSON payload with no
+            # such literal word in it, so the API rejects it without this preamble.
+            "input": f"Respond with a single JSON object per the instructions. Input JSON:\n{user_prompt}",
+            "max_output_tokens": max_output_tokens,
+            "text": {"format": {"type": "json_object"}},
+        }
+        # Reasoning models (gpt-5/o-series) don't support sampling temperature at all —
+        # the Responses API rejects the param outright rather than ignoring it.
+        if not is_reasoning_model:
+            kwargs["temperature"] = config.temperature
         try:
-            response = await self.client.responses.create(
-                model=config.model,
-                instructions=system_prompt,
-                input=user_prompt,
-                temperature=config.temperature,
-                max_output_tokens=config.max_tokens,
-                text={"format": {"type": "json_object"}},
-            )
+            response = await self.client.responses.create(**kwargs)
         except Exception as exc:
             raise LLMError(f"OpenAI request failed: {exc}") from exc
         return _parse_json(response.output_text)

@@ -1,0 +1,8 @@
+{
+  "depends_on": [
+    "ORDERS_NORMALIZED"
+  ],
+  "layer": "aggregate",
+  "object_name": "DAILY_SALES",
+  "statement": "CREATE TABLE DAILY_SALES AS\n  SELECT\n    order_date,\n    SUM(total) AS total_sales\n  FROM ORDERS_NORMALIZED\n  GROUP BY order_date;"
+}

@@ -5,15 +5,16 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.models import (
     ApprovalRequest,
+    ChatMessage,
     ChatMessageList,
     CreateSessionRequest,
     DeployRequest,
     EventList,
-    PlannerResponse,
     SessionList,
+    SessionMessageResponse,
     SessionState,
+    StarMessageRequest,
     UserMessageRequest,
-    VerificationRequest,
     Whiteboard,
 )
 from app.services import SessionService
@@ -45,17 +46,17 @@ async def list_sessions(
     return await service.list_sessions(limit)
 
 
-@router.post("/sessions/{session_id}/message", response_model=PlannerResponse)
+@router.post("/sessions/{session_id}/message", response_model=SessionMessageResponse)
 async def send_message(
     session_id: str, request: UserMessageRequest, service: Service
-) -> PlannerResponse:
+) -> SessionMessageResponse:
     return await service.message(session_id, request)
 
 
-@router.post("/sessions/{session_id}/approve", response_model=PlannerResponse)
+@router.post("/sessions/{session_id}/approve", response_model=SessionMessageResponse)
 async def approve(
     session_id: str, request: ApprovalRequest, service: Service
-) -> PlannerResponse:
+) -> SessionMessageResponse:
     return await service.approve(session_id, request)
 
 
@@ -64,13 +65,6 @@ async def deploy(
     session_id: str, request: DeployRequest, service: Service
 ) -> SessionState:
     return await service.deploy(session_id, request)
-
-
-@router.post("/sessions/{session_id}/verify", response_model=SessionState)
-async def verify(
-    session_id: str, request: VerificationRequest, service: Service
-) -> SessionState:
-    return await service.verify(session_id, request)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionState)
@@ -103,9 +97,31 @@ async def get_chat_messages(
     return await service.chat_messages(session_id, limit)
 
 
-@router.post("/sessions/{session_id}/chat-messages", response_model=PlannerResponse)
+@router.post("/sessions/{session_id}/chat-messages", response_model=SessionMessageResponse)
 async def send_chat_message(
     session_id: str, request: UserMessageRequest, service: Service
-) -> PlannerResponse:
+) -> SessionMessageResponse:
     """Send a chat message via planner (same as /message endpoint, chat-friendly)."""
     return await service.message(session_id, request)
+
+
+@router.post(
+    "/sessions/{session_id}/chat-messages/{message_id}/star",
+    response_model=ChatMessage,
+)
+async def star_chat_message(
+    session_id: str, message_id: str, request: StarMessageRequest, service: Service
+) -> ChatMessage:
+    """Star (or unstar) a chat message so it always stays in the Planner's context."""
+    return await service.star_message(session_id, message_id, request.starred)
+
+
+@router.post(
+    "/sessions/{session_id}/artifacts/{artifact_id}/approve",
+    response_model=SessionMessageResponse,
+)
+async def approve_artifact(
+    session_id: str, artifact_id: str, request: ApprovalRequest, service: Service
+) -> SessionMessageResponse:
+    """Approve or reject one proposed artifact, independent of the rest of its phase."""
+    return await service.approve_artifact(session_id, artifact_id, request)

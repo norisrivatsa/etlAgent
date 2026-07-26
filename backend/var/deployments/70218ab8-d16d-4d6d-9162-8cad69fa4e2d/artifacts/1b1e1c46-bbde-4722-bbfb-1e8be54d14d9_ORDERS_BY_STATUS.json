@@ -1,0 +1,8 @@
+{
+  "depends_on": [
+    "ORDERS_WITH_DAILY"
+  ],
+  "layer": "raw",
+  "object_name": "ORDERS_BY_STATUS",
+  "statement": "CREATE STREAM ORDERS_BY_STATUS AS\n  SELECT *\n  FROM ORDERS_WITH_DAILY\n  PARTITION BY status;"
+}

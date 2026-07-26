@@ -1,0 +1,9 @@
+{
+  "depends_on": [
+    "ORDERS_BY_STATUS",
+    "STATUS_COUNTS"
+  ],
+  "layer": "join",
+  "object_name": "ORDERS_ENRICHED",
+  "statement": "CREATE STREAM ORDERS_ENRICHED AS\n  SELECT\n    o.order_id,\n    o.customer_id,\n    o.status,\n    o.total,\n    o.order_date,\n    o.event_ts,\n    o.total_sales,\n    sc.status_count\n  FROM ORDERS_BY_STATUS o\n  LEFT JOIN STATUS_COUNTS sc\n    ON o.status = sc.status;"
+}

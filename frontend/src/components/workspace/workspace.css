@@ -1,0 +1,21 @@
+.workspace-wrap {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-chat-pane {
+  flex: 0 0 400px;
+  width: 400px;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--hairline);
+}
+
+.workspace-graph-pane {
+  flex: 1;
+  min-width: 0;
+}

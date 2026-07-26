@@ -10,52 +10,75 @@ from app.models import AgentModelConfig, ModelProvider
 from app.repositories import InMemoryStateRepository
 
 
+def _responses() -> list[dict]:
+    """Planner -> Connect -> Planner -> KsqlDB -> Planner, in the order the
+    orchestrator's synchronous phase loop consumes them."""
+    return [
+        {
+            "reply_to_user": "Got it — generating the orders connector.",
+            "requirements_patch": {
+                "source": {"type": "postgres", "table": "orders"},
+                "sink": {"type": "mongodb", "collection": "orders"},
+            },
+            "next_steps": [
+                {
+                    "agent": "connect",
+                    "instruction": "Generate the orders connector",
+                    "context_slice": {"table": "orders"},
+                    "phase": "connect",
+                }
+            ],
+            "awaiting": "agent:connect",
+        },
+        {
+            "status": "ok",
+            "artifacts": [
+                {
+                    "name": "orders-source",
+                    "config": {
+                        "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+                        "topic.prefix": "orders.",
+                    },
+                }
+            ],
+            "needs_approval": True,
+            "warnings": [],
+            "summary": "Generated orders-source connector",
+        },
+        {
+            "reply_to_user": "Connector approved. Building the ksqlDB pipeline.",
+            "requirements_patch": {},
+            "next_steps": [
+                {
+                    "agent": "ksqldb",
+                    "instruction": "Design the ksqlDB pipeline",
+                    "context_slice": {"topics": ["orders.orders"]},
+                    "phase": "ksqldb",
+                }
+            ],
+            "awaiting": "agent:ksqldb",
+        },
+        {
+            "status": "ok",
+            "artifacts": [
+                {"statement": "CREATE STREAM orders_raw ...;", "layer": "raw"},
+            ],
+            "needs_approval": True,
+            "warnings": [],
+            "summary": "Generated raw ksqlDB pipeline",
+        },
+        {
+            "reply_to_user": "Pipeline complete and ready to deploy.",
+            "requirements_patch": {},
+            "next_steps": [],
+            "awaiting": "done",
+        },
+    ]
+
+
 @pytest.fixture
 def llm() -> StubLLMRouter:
-    return StubLLMRouter(
-        [
-            {
-                "reply": "The plan is ready for approval.",
-                "requirements_patch": {
-                    "source": {"type": "postgres", "table": "orders"},
-                    "sink": {"type": "mongodb", "collection": "orders"},
-                    "scale": {"events_per_second": 100},
-                },
-                "plan": {
-                    "summary": "Postgres orders to MongoDB",
-                    "topics": [
-                        {
-                            "name": "orders.raw",
-                            "partitions": 3,
-                            "replication_factor": 1,
-                        }
-                    ],
-                    "connectors": [{"type": "source"}, {"type": "sink"}],
-                    "ksqldb_objects": [],
-                    "dependencies": [],
-                    "deployment_order": ["topics", "connectors"],
-                },
-                "open_questions": [],
-                "ready_for_approval": True,
-            },
-            {
-                "connector_configs": [
-                    {
-                        "name": "orders-source",
-                        "config": {
-                            "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
-                            "topic.prefix": "orders.",
-                        },
-                    }
-                ],
-                "dlq_configs": [],
-                "warnings": [],
-            },
-            {"statements": [], "objects": [], "warnings": []},
-            {"edge_cases": [], "summary": "No critical edge cases."},
-            {"findings": [], "approved": True, "summary": "Approved."},
-        ]
-    )
+    return StubLLMRouter(_responses())
 
 
 def test_llm_router_allows_missing_openai_key_for_unused_provider() -> None:
@@ -202,7 +225,7 @@ async def test_list_sessions_returns_existing_sessions(
 
 
 @pytest.mark.asyncio
-async def test_session_workflow_generates_deployment_package(
+async def test_session_workflow_fans_through_connect_then_ksqldb_to_deployment(
     tmp_path: Path, llm: StubLLMRouter
 ) -> None:
     repository = InMemoryStateRepository()
@@ -226,13 +249,22 @@ async def test_session_workflow_generates_deployment_package(
             )
             assert planned.status_code == 200
             assert planned.json()["session"]["status"] == "awaiting_approval"
+            assert len(planned.json()["session"]["whiteboard"]["artifacts"]) == 1
 
-            approved = await client.post(
+            connect_approved = await client.post(
                 f"/sessions/{session_id}/approve", json={"approved": True}
             )
-            assert approved.status_code == 200
-            assert approved.json()["session"]["status"] == "ready"
-            assert len(approved.json()["tasks"]) == 4
+            assert connect_approved.status_code == 200
+            # committing the connector triggers a fresh Planner call, which
+            # immediately dispatches the ksqlDB phase — so we land right back
+            # in awaiting_approval, now for ksqldb.
+            assert connect_approved.json()["session"]["status"] == "awaiting_approval"
+
+            ksqldb_approved = await client.post(
+                f"/sessions/{session_id}/approve", json={"approved": True}
+            )
+            assert ksqldb_approved.status_code == 200
+            assert ksqldb_approved.json()["session"]["status"] == "ready"
 
             deployed = await client.post(
                 f"/sessions/{session_id}/deploy", json={"mode": "package"}
@@ -249,13 +281,128 @@ async def test_session_workflow_generates_deployment_package(
 
             whiteboard = await client.get(f"/sessions/{session_id}/whiteboard")
             assert whiteboard.status_code == 200
-            assert whiteboard.json()["topics"][0]["name"] == "orders.raw"
+            assert len(whiteboard.json()["connectors"]) == 1
+            assert len(whiteboard.json()["ksqldb_objects"]) == 1
 
             events = await client.get(f"/sessions/{session_id}/events")
             assert events.status_code == 200
-            assert any(
-                event["type"] == "deployment" for event in events.json()["events"]
+            event_types = [event["type"] for event in events.json()["events"]]
+            assert "task" in event_types
+            assert "agent_message" in event_types
+
+            chat_messages = await client.get(f"/sessions/{session_id}/chat-messages")
+            assert chat_messages.status_code == 200
+            roles = [message["role"] for message in chat_messages.json()["messages"]]
+            assert "user" in roles
+            assert "assistant" in roles
+
+            artifacts_on_disk = list(
+                (Path(settings.deployment_root) / session_id / "artifacts").glob("*.json")
             )
+            assert len(artifacts_on_disk) == 2  # 1 connector + 1 ksql statement
+
+
+@pytest.mark.asyncio
+async def test_star_message_persists_and_appears_in_chat_messages(
+    tmp_path: Path, llm: StubLLMRouter
+) -> None:
+    app = create_app(
+        settings=Settings(deployment_root=tmp_path),
+        repository=InMemoryStateRepository(),
+        llm=llm,
+    )
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post("/sessions", json={"pipeline_name": "orders"})
+            session_id = created.json()["session_id"]
+
+            await client.post(
+                f"/sessions/{session_id}/message",
+                json={"message": "Move Postgres orders into MongoDB."},
+            )
+
+            chat = await client.get(f"/sessions/{session_id}/chat-messages")
+            messages = chat.json()["messages"]
+            assert all(message["starred"] is False for message in messages)
+            message_id = messages[0]["message_id"]
+
+            starred = await client.post(
+                f"/sessions/{session_id}/chat-messages/{message_id}/star",
+                json={"starred": True},
+            )
+            assert starred.status_code == 200
+            assert starred.json()["starred"] is True
+
+            chat_after = await client.get(f"/sessions/{session_id}/chat-messages")
+            target = next(
+                m for m in chat_after.json()["messages"] if m["message_id"] == message_id
+            )
+            assert target["starred"] is True
+
+            unstarred = await client.post(
+                f"/sessions/{session_id}/chat-messages/{message_id}/star",
+                json={"starred": False},
+            )
+            assert unstarred.json()["starred"] is False
+
+            missing = await client.post(
+                f"/sessions/{session_id}/chat-messages/not-a-real-id/star",
+                json={"starred": True},
+            )
+            assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approve_artifact_endpoint_commits_single_artifact(
+    tmp_path: Path, llm: StubLLMRouter
+) -> None:
+    settings = Settings(deployment_root=tmp_path)
+    app = create_app(settings=settings, repository=InMemoryStateRepository(), llm=llm)
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post("/sessions", json={"pipeline_name": "orders"})
+            session_id = created.json()["session_id"]
+
+            planned = await client.post(
+                f"/sessions/{session_id}/message",
+                json={"message": "Move Postgres orders into MongoDB."},
+            )
+            artifact_id = planned.json()["session"]["whiteboard"]["artifacts"][0]["artifact_id"]
+
+            missing = await client.post(
+                f"/sessions/{session_id}/artifacts/not-a-real-id/approve",
+                json={"approved": True},
+            )
+            assert missing.status_code == 404
+
+            approved = await client.post(
+                f"/sessions/{session_id}/artifacts/{artifact_id}/approve",
+                json={"approved": True},
+            )
+            assert approved.status_code == 200
+            artifact = next(
+                a
+                for a in approved.json()["session"]["whiteboard"]["artifacts"]
+                if a["artifact_id"] == artifact_id
+            )
+            assert artifact["status"] == "committed"
+
+            artifacts_on_disk = list(
+                (Path(settings.deployment_root) / session_id / "artifacts").glob("*.json")
+            )
+            assert len(artifacts_on_disk) == 1  # only the approved connector, not the ksqldb one
+
+            conflict = await client.post(
+                f"/sessions/{session_id}/artifacts/{artifact_id}/approve",
+                json={"approved": True},
+            )
+            assert conflict.status_code == 409
 
 
 @pytest.mark.asyncio

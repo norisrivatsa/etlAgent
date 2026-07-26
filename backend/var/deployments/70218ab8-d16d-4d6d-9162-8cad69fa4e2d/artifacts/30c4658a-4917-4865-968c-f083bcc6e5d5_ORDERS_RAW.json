@@ -1,0 +1,8 @@
+{
+  "depends_on": [
+    "orders-jdbc-source"
+  ],
+  "layer": "raw",
+  "object_name": "ORDERS_RAW",
+  "statement": "CREATE STREAM ORDERS_RAW (\n  order_id BIGINT,\n  customer_id BIGINT,\n  status VARCHAR,\n  total DOUBLE,\n  created_at BIGINT\n) WITH (\n  KAFKA_TOPIC='pg-orders',\n  VALUE_FORMAT='JSON',\n  TIMESTAMP='created_at'\n);"
+}

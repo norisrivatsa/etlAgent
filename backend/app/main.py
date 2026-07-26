@@ -9,8 +9,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from app.api import router
 from app.config import Settings, get_settings
 from app.llm import LLMRouter
+from app.orchestrator import Orchestrator
 from app.repositories import MongoStateRepository, StateRepository
-from app.runtime import RuntimeManager
 from app.services import SessionService
 from app.tools import create_tool_registry
 
@@ -34,10 +34,12 @@ def create_app(
             await mongo_repository.ensure_indexes()
             repository = mongo_repository
         tools = create_tool_registry(repository, settings)
-        runtimes = RuntimeManager(repository, llm or LLMRouter(settings), tools)
-        app.state.session_service = SessionService(repository, runtimes, settings)
+        llm_router = llm or LLMRouter(settings)
+        orchestrator = Orchestrator(llm_router, tools, repository, settings)
+        app.state.session_service = SessionService(
+            repository, orchestrator, llm_router, tools, settings
+        )
         yield
-        await runtimes.close()
         if mongo_client:
             mongo_client.close()
 

@@ -1,0 +1,9 @@
+{
+  "depends_on": [
+    "ORDERS_BY_DATE",
+    "DAILY_SALES"
+  ],
+  "layer": "join",
+  "object_name": "ORDERS_WITH_DAILY",
+  "statement": "CREATE STREAM ORDERS_WITH_DAILY AS\n  SELECT\n    o.order_id,\n    o.customer_id,\n    o.status,\n    o.total,\n    o.order_date,\n    o.event_ts,\n    ds.total_sales\n  FROM ORDERS_BY_DATE o\n  LEFT JOIN DAILY_SALES ds\n    ON o.order_date = ds.order_date;"
+}

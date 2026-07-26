@@ -1,22 +1,7 @@
-:root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-strong: #f0f3f5;
-  --field: #fbfcfd;
-  --border: #d8dee4;
-  --text: #25313b;
-  --muted: #667582;
-  --heading: #111820;
-  --code-bg: #101820;
-  --code-text: #d8e2ea;
-  --sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    sans-serif;
-  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+@import './theme/tokens.css';
 
-  font-family: var(--sans);
-  color: var(--text);
-  background: var(--bg);
+:root {
+  font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -24,6 +9,7 @@
 }
 
 * {
+  box-sizing: border-box;
   letter-spacing: 0;
 }
 
@@ -31,6 +17,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  background: var(--page-bg);
+  color: var(--text-primary);
 }
 
 h1,
@@ -38,37 +26,32 @@ h2,
 h3,
 p {
   margin-top: 0;
+  font-family: var(--font-sans);
 }
 
 h1,
 h2,
 h3 {
-  color: var(--heading);
-}
-
-h1 {
-  font-size: 30px;
-  line-height: 1.15;
-  margin-bottom: 0;
-}
-
-h2 {
-  font-size: 18px;
-  line-height: 1.2;
+  color: var(--text-primary);
 }
 
 p {
   line-height: 1.5;
+  color: var(--text-secondary);
 }
 
 code,
 pre {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
 }
 
 button,
 input,
 textarea,
 select {
-  outline-color: #2f6f72;
+  font-family: var(--font-sans);
+}
+
+button {
+  outline-color: var(--indigo);
 }

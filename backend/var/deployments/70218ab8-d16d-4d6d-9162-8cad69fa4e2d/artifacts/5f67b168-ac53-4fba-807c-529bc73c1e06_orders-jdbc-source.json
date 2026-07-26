@@ -1,0 +1,22 @@
+{
+  "config": {
+    "connection.password": "${DB_PASSWORD}",
+    "connection.url": "jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}",
+    "connection.user": "${DB_USER}",
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "incrementing.column.name": "order_id",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "true",
+    "mode": "incrementing",
+    "name": "orders-jdbc-source",
+    "poll.interval.ms": "5000",
+    "quote.sql.identifiers": "never",
+    "table.whitelist": "orders",
+    "tasks.max": "1",
+    "topic.prefix": "pg-",
+    "validate.non.null": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "true"
+  },
+  "name": "orders-jdbc-source"
+}

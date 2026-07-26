@@ -32,7 +32,6 @@ class SessionConfig(BaseModel):
     edge_case: AgentModelConfig = Field(default_factory=AgentModelConfig)
     executor: AgentModelConfig = Field(default_factory=AgentModelConfig)
     debug: AgentModelConfig = Field(default_factory=AgentModelConfig)
-    verification: AgentModelConfig = Field(default_factory=AgentModelConfig)
     kafka_bootstrap_servers: str | None = None
     connect_url: str | None = None
     ksqldb_url: str | None = None
@@ -46,8 +45,6 @@ class SessionStatus(StrEnum):
     READY = "ready"
     DEPLOYING = "deploying"
     DEPLOYED = "deployed"
-    VERIFYING = "verifying"
-    HEALTHY = "healthy"
     FAILED = "failed"
 
 
@@ -65,7 +62,6 @@ class EventType(StrEnum):
     TASK = "task"
     APPROVAL = "approval"
     DEPLOYMENT = "deployment"
-    VERIFICATION = "verification"
     ERROR = "error"
 
 
@@ -117,18 +113,19 @@ class DeploymentStatus(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
-class VerificationCheck(BaseModel):
+class Artifact(BaseModel):
+    """One proposed/committed file — a connector config or a ksqlDB statement."""
+
+    artifact_id: str = Field(default_factory=lambda: str(uuid4()))
+    agent: str  # "connect" | "ksqldb"
+    kind: str  # "connector" | "ksql_statement"
     name: str
-    passed: bool | None = None
-    status: str = "unknown"
-    details: dict[str, Any] = Field(default_factory=dict)
-
-
-class VerificationStatus(BaseModel):
-    state: str = "not_started"
-    checks: list[VerificationCheck] = Field(default_factory=list)
-    summary: str | None = None
-    updated_at: datetime = Field(default_factory=utc_now)
+    content: dict[str, Any]
+    status: str = "proposed"  # "proposed" | "rejected" | "committed" | "superseded"
+    phase: str | None = None
+    file_path: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    committed_at: datetime | None = None
 
 
 class Whiteboard(BaseModel):
@@ -137,10 +134,10 @@ class Whiteboard(BaseModel):
     topics: list[dict[str, Any]] = Field(default_factory=list)
     connectors: list[dict[str, Any]] = Field(default_factory=list)
     ksqldb_objects: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[Artifact] = Field(default_factory=list)
     evaluation: EvaluationState = Field(default_factory=EvaluationState)
     decisions: list[Decision] = Field(default_factory=list)
     deployment_status: DeploymentStatus = Field(default_factory=DeploymentStatus)
-    verification_status: VerificationStatus = Field(default_factory=VerificationStatus)
     revision: int = 0
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -166,6 +163,7 @@ class AgentTask(BaseModel):
     agent: str
     instruction: str
     context: dict[str, Any] = Field(default_factory=dict)
+    phase: str | None = None
     status: TaskStatus = TaskStatus.PENDING
     result: dict[str, Any] | None = None
     error: str | None = None
@@ -189,6 +187,7 @@ class SessionEvent(BaseModel):
     type: EventType
     source: str
     data: dict[str, Any] = Field(default_factory=dict)
+    starred: bool = False
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -200,6 +199,7 @@ class CreateSessionRequest(BaseModel):
 
 class UserMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
+    artifact_id: str | None = None
 
 
 class ApprovalRequest(BaseModel):
@@ -216,16 +216,9 @@ class DeployRequest(BaseModel):
     mode: DeployMode = DeployMode.PACKAGE
 
 
-class VerificationRequest(BaseModel):
-    expected_topic_counts: dict[str, int] = Field(default_factory=dict)
-    sink_count_url: str | None = None
-    expected_sink_count: int | None = None
-    duplicate_check_query: str | None = None
-    join_check_query: str | None = None
-    offset_sample_seconds: float = Field(default=2.0, ge=0.1, le=60)
+class SessionMessageResponse(BaseModel):
+    """HTTP response envelope for /message, /approve, /chat-messages POST."""
 
-
-class PlannerResponse(BaseModel):
     session: SessionState
     reply: str
     tasks: list[AgentTask] = Field(default_factory=list)
@@ -236,12 +229,32 @@ class EventList(BaseModel):
     next_cursor: datetime | None = None
 
 
-class PlannerLLMOutput(BaseModel):
-    reply: str
+class NextStep(BaseModel):
+    """One Planner-authored dispatch unit — design doc §3b."""
+
+    agent: str
+    instruction: str
+    context_slice: dict[str, Any] = Field(default_factory=dict)
+    phase: str
+
+
+class PlannerResponse(BaseModel):
+    """The Planner's own LLM output contract — design doc §3b."""
+
+    reply_to_user: str
     requirements_patch: dict[str, Any] = Field(default_factory=dict)
-    plan: PipelinePlan | None = None
-    open_questions: list[str] = Field(default_factory=list)
-    ready_for_approval: bool = False
+    next_steps: list[NextStep] = Field(default_factory=list)
+    awaiting: str = "user"  # "user" | "approval" | "done" | "agent:<name>"
+
+
+class WorkerResponse(BaseModel):
+    """Every worker's output contract — design doc §3a."""
+
+    status: str = "ok"  # "ok" | "needs_clarification" | "failed"
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    needs_approval: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    summary: str = ""
 
 
 class ChatMessage(BaseModel):
@@ -250,9 +263,14 @@ class ChatMessage(BaseModel):
     session_id: str
     role: str  # "user" or "assistant"
     content: str
+    starred: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
 
 class ChatMessageList(BaseModel):
     messages: list[ChatMessage]
+
+
+class StarMessageRequest(BaseModel):
+    starred: bool = True

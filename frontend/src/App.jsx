@@ -1,16 +1,18 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { ChatPage } from './components/ChatPage'
-import { WhiteboardPage } from './components/WhiteboardPage'
-import './App.css'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { AppShell } from './components/layout/AppShell'
+import { WhiteboardPage } from './components/whiteboard/WhiteboardPage'
+import { WorkspacePage } from './components/workspace/WorkspacePage'
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/chat" replace />} />
-        <Route path="/chat" element={<ChatPage />} />
-        <Route path="/chat/:sessionId" element={<ChatPage />} />
-        <Route path="/whiteboard/:sessionId" element={<WhiteboardPage />} />
+        <Route element={<AppShell />}>
+          <Route path="/" element={<Navigate to="/session" replace />} />
+          <Route path="/session" element={<WorkspacePage />} />
+          <Route path="/session/:sessionId" element={<WorkspacePage />} />
+          <Route path="/session/:sessionId/whiteboard" element={<WhiteboardPage />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   )

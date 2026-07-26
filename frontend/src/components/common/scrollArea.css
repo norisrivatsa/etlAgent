@@ -1,0 +1,72 @@
+.scroll-area {
+  position: relative;
+  overflow: hidden;
+}
+
+.scroll-area-viewport {
+  height: 100%;
+  width: 100%;
+  /* flex/min-height are no-ops unless the caller's className makes
+     .scroll-area itself a flex container (e.g. chat-scroll) — harmless
+     otherwise, needed there so this viewport actually fills it. */
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: none; /* Firefox: hide native, we draw our own */
+}
+
+.scroll-area-viewport::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge: hide native, we draw our own */
+}
+
+.scroll-area-track-y {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.scroll-area-thumb-y {
+  position: absolute;
+  right: 0;
+  width: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--indigo-soft);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease;
+}
+
+.scroll-area-thumb-y:hover,
+.scroll-area-thumb-y.dragging {
+  background: var(--indigo);
+}
+
+.scroll-area-track-x {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  height: 6px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.scroll-area-thumb-x {
+  position: absolute;
+  bottom: 0;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--indigo-soft);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease;
+}
+
+.scroll-area-thumb-x:hover,
+.scroll-area-thumb-x.dragging {
+  background: var(--indigo);
+}

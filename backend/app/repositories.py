@@ -38,6 +38,9 @@ class StateRepository(Protocol):
     async def list_events(
         self, session_id: str, after: datetime | None = None, limit: int = 100
     ) -> list[SessionEvent]: ...
+    async def set_event_starred(
+        self, session_id: str, event_id: str, starred: bool
+    ) -> SessionEvent | None: ...
 
 
 def _dump(model: Any) -> dict[str, Any]:
@@ -162,6 +165,17 @@ class MongoStateRepository:
         )
         return [SessionEvent.model_validate(doc) async for doc in cursor]
 
+    async def set_event_starred(
+        self, session_id: str, event_id: str, starred: bool
+    ) -> SessionEvent | None:
+        doc = await self.events.find_one_and_update(
+            {"session_id": session_id, "event_id": event_id},
+            {"$set": {"starred": starred}},
+            projection={"_id": 0},
+            return_document=ReturnDocument.AFTER,
+        )
+        return SessionEvent.model_validate(doc) if doc else None
+
 
 class InMemoryStateRepository:
     def __init__(self) -> None:
@@ -262,3 +276,13 @@ class InMemoryStateRepository:
             and (after is None or event.created_at > after)
         ]
         return sorted(found, key=lambda event: event.created_at)[:limit]
+
+    async def set_event_starred(
+        self, session_id: str, event_id: str, starred: bool
+    ) -> SessionEvent | None:
+        for index, event in enumerate(self.events):
+            if event.session_id == session_id and event.event_id == event_id:
+                updated = event.model_copy(update={"starred": starred})
+                self.events[index] = updated
+                return deepcopy(updated)
+        return None

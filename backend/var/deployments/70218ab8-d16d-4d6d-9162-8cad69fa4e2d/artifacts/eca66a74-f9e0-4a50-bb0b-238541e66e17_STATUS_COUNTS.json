@@ -1,0 +1,8 @@
+{
+  "depends_on": [
+    "ORDERS_NORMALIZED"
+  ],
+  "layer": "aggregate",
+  "object_name": "STATUS_COUNTS",
+  "statement": "CREATE TABLE STATUS_COUNTS AS\n  SELECT\n    status,\n    COUNT(*) AS status_count\n  FROM ORDERS_NORMALIZED\n  GROUP BY status;"
+}
