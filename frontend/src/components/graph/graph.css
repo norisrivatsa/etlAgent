@@ -498,14 +498,53 @@
   border: 1px solid transparent;
 }
 
-.pipeline-node--connector,
-.pipeline-node--ksql {
+.pipeline-node--source-connector,
+.pipeline-node--sink-connector,
+.pipeline-node--topic,
+.pipeline-node--ksql-stream,
+.pipeline-node--ksql-table {
   cursor: pointer;
 }
 
-.pipeline-node--source {
+/* Topics: one shared color regardless of position in the pipeline. */
+.pipeline-node--topic {
+  background: var(--rose-soft);
+  border-color: var(--rose);
+}
+
+/* ksqlDB: one color for every stream, one color for every table — not by
+   raw/aggregate/join layer, so a join's output table reads the same as any
+   other table. */
+.pipeline-node--ksql-stream {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+}
+
+.pipeline-node--ksql-table {
+  background: var(--indigo-soft);
+  border-color: var(--indigo);
+}
+
+/* Connectors: color is entirely live run status, not connector type — a
+   source and a sink connector look identical modulo their status color. */
+.pipeline-node--status-green {
+  background: var(--success-soft);
+  border-color: var(--success);
+}
+
+.pipeline-node--status-red {
+  background: var(--error-soft);
+  border-color: var(--error);
+}
+
+.pipeline-node--status-orange {
+  background: var(--orange-soft);
+  border-color: var(--orange);
+}
+
+.pipeline-node--status-grey {
   background: var(--surface-sunken);
-  border: 1.5px dashed var(--hairline);
+  border-color: var(--hairline);
 }
 
 .pipeline-node-dot {
@@ -516,17 +555,12 @@
   background: var(--text-tertiary);
 }
 
-.pipeline-node--proposed .pipeline-node-dot {
+.pipeline-node-dot[data-status='proposed'] {
   background: var(--amber);
 }
 
-.pipeline-node--committed .pipeline-node-dot {
+.pipeline-node-dot[data-status='committed'] {
   background: var(--success);
-}
-
-.pipeline-node--rejected .pipeline-node-dot,
-.pipeline-node--superseded .pipeline-node-dot {
-  background: var(--error);
 }
 
 .pipeline-node-label {
@@ -537,6 +571,76 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+/* -- Pipeline Graph: node drawer — live status + ksqlDB statement ----------- */
+
+.pipeline-drawer-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: var(--space-4);
+}
+
+.pipeline-drawer-status-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.pipeline-drawer-status--green .pipeline-drawer-status-dot {
+  background: var(--success);
+}
+
+.pipeline-drawer-status--red .pipeline-drawer-status-dot {
+  background: var(--error);
+}
+
+.pipeline-drawer-status--orange .pipeline-drawer-status-dot {
+  background: var(--orange);
+}
+
+.pipeline-drawer-status--grey .pipeline-drawer-status-dot {
+  background: var(--text-tertiary);
+}
+
+.pipeline-drawer-status-tasks {
+  margin-left: auto;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.pipeline-drawer-statement {
+  margin-bottom: var(--space-4);
+}
+
+.pipeline-drawer-statement-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
+}
+
+.pipeline-drawer-statement-code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-control);
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-primary);
+  margin: 0;
 }
 
 /* -- Pipeline Graph: artifact drawer actions -------------------------------- */

@@ -114,4 +114,9 @@ export const api = {
   async getWhiteboard(sessionId) {
     return request(`/sessions/${sessionId}/whiteboard`)
   },
+
+  // Pipeline graph (nodes/edges for the Pipeline Graph view, with live connector status)
+  async getPipelineGraph(sessionId) {
+    return request(`/sessions/${sessionId}/pipeline-graph`)
+  },
 }

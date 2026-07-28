@@ -81,6 +81,17 @@ class StateTools:
         messages = await self.repository.unread_messages(session_id, recipient)
         return [message.model_dump(mode="json") for message in messages]
 
+    async def query_messages(
+        self, session_id: str, query: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        """Full human<->planner chat history for this session, beyond the last-10
+        window the Planner is normally given — its query_messages tool."""
+        messages = await self.repository.list_chat_messages(session_id)
+        if query:
+            needle = query.lower()
+            messages = [message for message in messages if needle in message.content.lower()]
+        return [message.model_dump(mode="json") for message in messages[-limit:]]
+
 
 class DebugTools:
     def __init__(self, settings: Settings):
@@ -237,6 +248,7 @@ def create_tool_registry(
         "read_task",
         "send_message",
         "get_unread_messages",
+        "query_messages",
     ):
         registry.register(name, getattr(state, name))
     for name in ("grep", "tail", "journalctl"):

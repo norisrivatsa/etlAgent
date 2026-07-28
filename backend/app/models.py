@@ -128,6 +128,20 @@ class Artifact(BaseModel):
     committed_at: datetime | None = None
 
 
+class ChatMessage(BaseModel):
+    """Chat message view of a human<->planner turn — never agent-to-agent traffic.
+    Embedded directly in the session document (see SessionState.messages) so it's
+    persisted the instant it's sent, with no separate collection round-trip."""
+
+    message_id: str = Field(default_factory=lambda: str(uuid4()))
+    session_id: str
+    role: str  # "user" or "assistant"
+    content: str
+    starred: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Whiteboard(BaseModel):
     requirements: RequirementState = Field(default_factory=RequirementState)
     plan: PipelinePlan = Field(default_factory=PipelinePlan)
@@ -138,6 +152,10 @@ class Whiteboard(BaseModel):
     evaluation: EvaluationState = Field(default_factory=EvaluationState)
     decisions: list[Decision] = Field(default_factory=list)
     deployment_status: DeploymentStatus = Field(default_factory=DeploymentStatus)
+    # Freeform running engineering log the Planner curates itself from what the
+    # user says about the source/sink/schema — its own judgment of what matters,
+    # not a structured field like `requirements`. See plannerAgentPrompt.md.
+    pipeline_notes: str = ""
     revision: int = 0
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -147,6 +165,11 @@ class SessionState(BaseModel):
     pipeline_name: str
     config: SessionConfig = Field(default_factory=SessionConfig)
     whiteboard: Whiteboard = Field(default_factory=Whiteboard)
+    # Every human<->planner chat turn, embedded directly in the session document —
+    # the durable source of truth for chat. Only the last RECENT_MESSAGE_COUNT
+    # (plus starred ones) are ever put in front of the Planner directly; anything
+    # older is reachable only through its query_messages tool.
+    messages: list[ChatMessage] = Field(default_factory=list)
     status: SessionStatus = SessionStatus.REQUIREMENTS
     pending_approval: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
@@ -238,6 +261,17 @@ class NextStep(BaseModel):
     phase: str
 
 
+class TopicDeclaration(BaseModel):
+    """One Kafka topic the Planner knows exists, for the Pipeline Graph view —
+    see PlannerResponse.topics. Upserted by name, not replaced wholesale."""
+
+    name: str
+    # The component name that writes to this topic: a connector's Artifact.name
+    # for a source-phase topic, or a ksqlDB object_name for a topic produced by
+    # a ksqlDB statement (e.g. the final joined-table topic feeding the sink).
+    produced_by: str
+
+
 class PlannerResponse(BaseModel):
     """The Planner's own LLM output contract — design doc §3b."""
 
@@ -245,6 +279,12 @@ class PlannerResponse(BaseModel):
     requirements_patch: dict[str, Any] = Field(default_factory=dict)
     next_steps: list[NextStep] = Field(default_factory=list)
     awaiting: str = "user"  # "user" | "approval" | "done" | "agent:<name>"
+    # Full replacement text for whiteboard.pipeline_notes, or None to leave it
+    # unchanged this turn — the Planner rewrites/curates the whole note itself.
+    pipeline_notes: str | None = None
+    # New/updated topics only — upserted by name into whiteboard.topics, not a
+    # full replacement. Powers the Pipeline Graph view's topic nodes.
+    topics: list[TopicDeclaration] = Field(default_factory=list)
 
 
 class WorkerResponse(BaseModel):
@@ -257,20 +297,51 @@ class WorkerResponse(BaseModel):
     summary: str = ""
 
 
-class ChatMessage(BaseModel):
-    """Chat message view of USER_MESSAGE and AGENT_MESSAGE events."""
-    message_id: str
-    session_id: str
-    role: str  # "user" or "assistant"
-    content: str
-    starred: bool = False
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-
-
 class ChatMessageList(BaseModel):
     messages: list[ChatMessage]
 
 
 class StarMessageRequest(BaseModel):
     starred: bool = True
+
+
+class ConnectorStatus(BaseModel):
+    """Live Kafka Connect status for one connector, reduced to the traffic-light
+    color the Pipeline Graph view actually needs."""
+
+    color: str  # "green" | "red" | "orange" | "grey"
+    state: str | None = None  # raw Connect state: RUNNING/FAILED/PAUSED/UNASSIGNED
+    failed_tasks: int = 0
+    total_tasks: int = 0
+    detail: str | None = None  # set when the live lookup itself failed
+
+
+class PipelineGraphNode(BaseModel):
+    """One node in the Pipeline Graph view. `type` drives the frontend's color
+    coding: "source_connector"/"sink_connector" (colored by `connector_status`,
+    not `type`), "topic" (one shared color), "ksql_stream"/"ksql_table" (one
+    color each)."""
+
+    id: str
+    name: str
+    type: str
+    artifact_id: str | None = None
+    # Connector nodes: "source"/"sink" (Artifact.phase). ksqlDB nodes: "raw"/
+    # "aggregate"/"join" (content.layer). Topic nodes: None.
+    phase: str | None = None
+    # Artifact.status ("proposed"/"committed") for connector/ksqlDB nodes; None
+    # for topic nodes, which aren't independently approved.
+    status: str | None = None
+    # The CREATE STREAM/TABLE statement, ksqlDB nodes only.
+    statement: str | None = None
+    connector_status: ConnectorStatus | None = None
+
+
+class PipelineGraphEdge(BaseModel):
+    source: str
+    target: str
+
+
+class PipelineGraph(BaseModel):
+    nodes: list[PipelineGraphNode] = Field(default_factory=list)
+    edges: list[PipelineGraphEdge] = Field(default_factory=list)

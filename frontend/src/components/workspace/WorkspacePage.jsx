@@ -31,7 +31,8 @@ export function WorkspacePage() {
   const [events, setEvents] = useState([])
   const [graphView, setGraphView] = useState('agent')
   const [selectedNodeId, setSelectedNodeId] = useState(null)
-  const [selectedArtifactId, setSelectedArtifactId] = useState(null)
+  const [selectedPipelineNode, setSelectedPipelineNode] = useState(null)
+  const [pipelineRefreshToken, setPipelineRefreshToken] = useState(0)
   const [focusedArtifact, setFocusedArtifact] = useState(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -78,8 +79,10 @@ export function WorkspacePage() {
     ? deriveAgentJson(selectedNodeId, { nodeState: selectedState, whiteboard: currentSession?.whiteboard })
     : null
 
-  const selectedArtifact = selectedArtifactId
-    ? (currentSession?.whiteboard?.artifacts || []).find((a) => a.artifact_id === selectedArtifactId)
+  const selectedArtifact = selectedPipelineNode?.artifact_id
+    ? (currentSession?.whiteboard?.artifacts || []).find(
+        (a) => a.artifact_id === selectedPipelineNode.artifact_id,
+      )
     : null
 
   async function runAction(label, action) {
@@ -88,6 +91,7 @@ export function WorkspacePage() {
     try {
       await action()
       await Promise.all([refreshCurrentSession(), refreshEvents()])
+      setPipelineRefreshToken((token) => token + 1)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -102,10 +106,10 @@ export function WorkspacePage() {
   const handleArtifactApprove = (artifactId, approved) =>
     runAction(approved ? 'Committing artifact' : 'Rejecting artifact', () =>
       api.approveArtifact(sessionId, artifactId, approved),
-    ).then(() => setSelectedArtifactId(null))
+    ).then(() => setSelectedPipelineNode(null))
   const handleFocusChat = (artifact) => {
     setFocusedArtifact(artifact)
-    setSelectedArtifactId(null)
+    setSelectedPipelineNode(null)
   }
 
   if (!sessionId) {
@@ -169,8 +173,9 @@ export function WorkspacePage() {
           />
         ) : (
           <PipelineGraphCanvas
-            whiteboard={currentSession?.whiteboard}
-            onSelectArtifact={(artifact) => setSelectedArtifactId(artifact.artifact_id)}
+            sessionId={sessionId}
+            refreshToken={pipelineRefreshToken}
+            onSelectNode={setSelectedPipelineNode}
           />
         )}
 
@@ -187,13 +192,14 @@ export function WorkspacePage() {
         />
       )}
 
-      {selectedArtifact && (
+      {selectedPipelineNode && (
         <PipelineArtifactDrawer
+          node={selectedPipelineNode}
           artifact={selectedArtifact}
           busy={Boolean(busy)}
           onApproveArtifact={handleArtifactApprove}
           onFocusChat={handleFocusChat}
-          onClose={() => setSelectedArtifactId(null)}
+          onClose={() => setSelectedPipelineNode(null)}
         />
       )}
     </div>

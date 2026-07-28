@@ -11,6 +11,7 @@ from app.llm import LLMRouter
 from app.models import (
     AgentTask,
     Artifact,
+    ChatMessage,
     Decision,
     EventType,
     NextStep,
@@ -19,6 +20,7 @@ from app.models import (
     SessionEvent,
     SessionState,
     SessionStatus,
+    TopicDeclaration,
     WorkerResponse,
 )
 from app.repositories import StateRepository
@@ -67,6 +69,7 @@ class Orchestrator:
         agents = build_agents(state.config, self.llm, self.tools)
         if message:
             event_data: dict[str, Any] = {"message": message}
+            metadata: dict[str, Any] = {"source": "user"}
             if focus_artifact_id:
                 focused = next(
                     (a for a in state.whiteboard.artifacts if a.artifact_id == focus_artifact_id),
@@ -75,6 +78,12 @@ class Orchestrator:
                 if focused:
                     event_data["artifact_id"] = focused.artifact_id
                     event_data["artifact_name"] = focused.name
+                    metadata["artifact_id"] = focused.artifact_id
+                    metadata["artifact_name"] = focused.name
+            # Persisted to the session document immediately, before the Planner
+            # ever sees it — the session collection is the durable source of
+            # truth for chat, not just the live event stream.
+            await self._add_chat_message(state, "user", message, metadata)
             await self._emit(state, EventType.USER_MESSAGE, "user", event_data)
 
         last_reply = ""
@@ -130,6 +139,9 @@ class Orchestrator:
             # general plan continuation again.
             focus_artifact_id = None
             self._apply_patch(state, plan.requirements_patch)
+            if plan.pipeline_notes is not None:
+                state.whiteboard.pipeline_notes = plan.pipeline_notes
+            self._upsert_topics(state, plan.topics)
             await self._emit_chat(state, plan.reply_to_user)
             last_reply = plan.reply_to_user or last_reply
 
@@ -364,34 +376,34 @@ class Orchestrator:
             "plan": state.whiteboard.plan.model_dump(mode="json"),
             "artifacts": [a.model_dump(mode="json") for a in state.whiteboard.artifacts],
             "evaluation": state.whiteboard.evaluation.model_dump(mode="json"),
+            "pipeline_notes": state.whiteboard.pipeline_notes,
+            "environment": {
+                "kafka_bootstrap_servers": state.config.kafka_bootstrap_servers,
+                "connect_url": state.config.connect_url,
+                "ksqldb_url": state.config.ksqldb_url,
+            },
             "user_message": message,
-            "conversation_history": await self._conversation_history(state.session_id),
+            "conversation_history": self._conversation_history(state),
             "focused_artifact": focused.model_dump(mode="json") if focused else None,
         }
 
-    async def _conversation_history(self, session_id: str) -> list[dict[str, Any]]:
+    @staticmethod
+    def _conversation_history(state: SessionState) -> list[dict[str, Any]]:
         """The last RECENT_MESSAGE_COUNT chat turns, plus every starred turn no
         matter how old — starring is how the user keeps something in the
-        Planner's context permanently (see prompts/agent_class_implementation.md)."""
-        events = await self.repository.list_events(session_id, None, 1000)
-        turns: list[dict[str, Any]] = []
-        for event in events:
-            if event.type == EventType.USER_MESSAGE:
-                content = event.data.get("message", "")
-            elif event.type == EventType.AGENT_MESSAGE and event.source == "planner":
-                content = event.data.get("reply", "")
-            else:
-                continue
-            turns.append(
-                {
-                    "role": "user" if event.type == EventType.USER_MESSAGE else "assistant",
-                    "content": content,
-                    "starred": event.starred,
-                    "created_at": event.created_at.isoformat(),
-                }
-            )
-
-        turns.sort(key=lambda turn: turn["created_at"])
+        Planner's context permanently (see prompts/agent_class_implementation.md).
+        Anything older than this window is reachable only through the Planner's
+        query_messages tool — state.messages already holds the full session
+        history in memory, so no repository round-trip is needed here."""
+        turns = [
+            {
+                "role": message.role,
+                "content": message.content,
+                "starred": message.starred,
+                "created_at": message.created_at.isoformat(),
+            }
+            for message in sorted(state.messages, key=lambda message: message.created_at)
+        ]
         recent = turns[-RECENT_MESSAGE_COUNT:]
         recent_keys = {turn["created_at"] for turn in recent}
         starred = [turn for turn in turns if turn["starred"] and turn["created_at"] not in recent_keys]
@@ -415,6 +427,18 @@ class Orchestrator:
         state.whiteboard.requirements = state.whiteboard.requirements.model_copy(update=known)
 
     @staticmethod
+    def _upsert_topics(state: SessionState, topics: list[TopicDeclaration]) -> None:
+        """Merge the Planner's topic declarations into whiteboard.topics by name —
+        an addition, not a wholesale replacement, since topics accumulate across
+        phases (source-phase raw topics, then the final ksqlDB output topic)."""
+        if not topics:
+            return
+        by_name = {topic["name"]: topic for topic in state.whiteboard.topics}
+        for declaration in topics:
+            by_name[declaration.name] = declaration.model_dump(mode="json")
+        state.whiteboard.topics = list(by_name.values())
+
+    @staticmethod
     def _approval_prompt(phase: str | None, artifacts: list[Artifact]) -> str:
         names = ", ".join(artifact.name for artifact in artifacts)
         return f"Generated {len(artifacts)} {phase} artifact(s): {names}. Approve to continue?"
@@ -423,7 +447,20 @@ class Orchestrator:
         if not text:
             return
         state.whiteboard.decisions.append(Decision(action="agent_message", reason=text))
+        await self._add_chat_message(state, "assistant", text, {"source": "planner"})
         await self._emit(state, EventType.AGENT_MESSAGE, "planner", {"reply": text})
+
+    async def _add_chat_message(
+        self, state: SessionState, role: str, content: str, metadata: dict[str, Any]
+    ) -> None:
+        """Human<->planner chat only — never agent-to-agent traffic. Written to
+        the session document immediately, and appended in-memory so the rest of
+        this turn (and _conversation_history) sees it right away."""
+        message = ChatMessage(
+            session_id=state.session_id, role=role, content=content, metadata=metadata
+        )
+        await self.repository.add_chat_message(state.session_id, message)
+        state.messages.append(message)
 
     async def _emit(
         self, state: SessionState, event_type: EventType, source: str, data: dict[str, Any]

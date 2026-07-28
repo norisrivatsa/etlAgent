@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -16,6 +16,9 @@ class LLMError(RuntimeError):
     pass
 
 
+ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[Any]]
+
+
 class LLMClient(ABC):
     @abstractmethod
     async def generate_json(
@@ -24,6 +27,20 @@ class LLMClient(ABC):
         system_prompt: str,
         user_prompt: str,
     ) -> dict[str, Any]: ...
+
+    async def generate_json_with_tools(
+        self,
+        config: AgentModelConfig,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, Any]],
+        tool_executor: ToolExecutor,
+    ) -> dict[str, Any]:
+        """Default for providers with no real function-calling support here
+        (e.g. Ollama, whose tool-calling reliability varies too much across
+        models to depend on) — answer directly, tools unused."""
+        del tools, tool_executor
+        return await self.generate_json(config, system_prompt, user_prompt)
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -41,6 +58,10 @@ def _parse_json(text: str) -> dict[str, Any]:
 
 
 class OpenAILLMClient(LLMClient):
+    # Hard cap on tool-call round trips within one generate_json_with_tools call,
+    # so a model that keeps calling tools instead of answering can't loop forever.
+    MAX_TOOL_ITERATIONS = 4
+
     def __init__(self, settings: Settings):
         if not settings.openai_api_key:
             raise LLMError(
@@ -48,11 +69,8 @@ class OpenAILLMClient(LLMClient):
             )
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    async def generate_json(
-        self,
-        config: AgentModelConfig,
-        system_prompt: str,
-        user_prompt: str,
+    def _base_kwargs(
+        self, config: AgentModelConfig, system_prompt: str, user_prompt: str
     ) -> dict[str, Any]:
         is_reasoning_model = config.model.startswith(("gpt-5", "o1", "o3", "o4"))
         max_output_tokens = config.max_tokens
@@ -76,8 +94,56 @@ class OpenAILLMClient(LLMClient):
         # the Responses API rejects the param outright rather than ignoring it.
         if not is_reasoning_model:
             kwargs["temperature"] = config.temperature
+        return kwargs
+
+    async def generate_json(
+        self,
+        config: AgentModelConfig,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
+        kwargs = self._base_kwargs(config, system_prompt, user_prompt)
         try:
             response = await self.client.responses.create(**kwargs)
+        except Exception as exc:
+            raise LLMError(f"OpenAI request failed: {exc}") from exc
+        return _parse_json(response.output_text)
+
+    async def generate_json_with_tools(
+        self,
+        config: AgentModelConfig,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, Any]],
+        tool_executor: ToolExecutor,
+    ) -> dict[str, Any]:
+        kwargs = self._base_kwargs(config, system_prompt, user_prompt)
+        kwargs["tools"] = tools
+        try:
+            response = await self.client.responses.create(**kwargs)
+            for _ in range(self.MAX_TOOL_ITERATIONS):
+                calls = [item for item in response.output if item.type == "function_call"]
+                if not calls:
+                    break
+                outputs = []
+                for call in calls:
+                    arguments = json.loads(call.arguments or "{}")
+                    result = await tool_executor(call.name, arguments)
+                    outputs.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call.call_id,
+                            "output": json.dumps(result, default=str),
+                        }
+                    )
+                response = await self.client.responses.create(
+                    model=config.model,
+                    previous_response_id=response.id,
+                    input=outputs,
+                    max_output_tokens=kwargs["max_output_tokens"],
+                    text={"format": {"type": "json_object"}},
+                    tools=tools,
+                )
         except Exception as exc:
             raise LLMError(f"OpenAI request failed: {exc}") from exc
         return _parse_json(response.output_text)
@@ -164,6 +230,22 @@ class LLMRouter:
             self.clients[config.provider] = client
         return await client.generate_json(config, system_prompt, user_prompt)
 
+    async def generate_json_with_tools(
+        self,
+        config: AgentModelConfig,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, Any]],
+        tool_executor: ToolExecutor,
+    ) -> dict[str, Any]:
+        client = self.clients.get(config.provider)
+        if client is None:
+            client = self.client_factories[config.provider]()
+            self.clients[config.provider] = client
+        return await client.generate_json_with_tools(
+            config, system_prompt, user_prompt, tools, tool_executor
+        )
+
 
 class StubLLMRouter:
     """Deterministic injectable LLM used by tests and local examples."""
@@ -181,3 +263,14 @@ class StubLLMRouter:
         if not self.responses:
             return {"reply": "Requirements recorded.", "requirements_patch": {}}
         return self.responses.pop(0)
+
+    async def generate_json_with_tools(
+        self,
+        config: AgentModelConfig,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, Any]],
+        tool_executor: ToolExecutor,
+    ) -> dict[str, Any]:
+        del tools, tool_executor
+        return await self.generate_json(config, system_prompt, user_prompt)

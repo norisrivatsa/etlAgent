@@ -7,7 +7,7 @@ import pytest
 
 from app.config import Settings
 from app.llm import StubLLMRouter
-from app.models import EventType, SessionEvent, SessionState, utc_now
+from app.models import ChatMessage, EventType, SessionState, utc_now
 from app.orchestrator import Orchestrator
 from app.repositories import InMemoryStateRepository
 from app.tools import ToolRegistry
@@ -413,36 +413,33 @@ async def test_turn_stops_after_max_iterations_instead_of_looping_forever(tmp_pa
 
 @pytest.mark.asyncio
 async def test_conversation_history_includes_last_ten_plus_starred(tmp_path: Path) -> None:
-    orchestrator, repository = _orchestrator(tmp_path, [])
-    session_id = "s1"
+    orchestrator, _ = _orchestrator(tmp_path, [])
     base = utc_now()
+    state = SessionState(pipeline_name="p")
 
-    # 15 user/assistant turn pairs = 30 events, strictly chronological.
+    # 15 user/assistant turn pairs = 30 chat messages, strictly chronological.
     for i in range(15):
-        await repository.add_event(
-            SessionEvent(
-                session_id=session_id,
-                type=EventType.USER_MESSAGE,
-                source="user",
-                data={"message": f"user turn {i}"},
+        state.messages.append(
+            ChatMessage(
+                session_id=state.session_id,
+                role="user",
+                content=f"user turn {i}",
                 created_at=base + timedelta(seconds=i * 2),
             )
         )
-        await repository.add_event(
-            SessionEvent(
-                session_id=session_id,
-                type=EventType.AGENT_MESSAGE,
-                source="planner",
-                data={"reply": f"assistant turn {i}"},
+        state.messages.append(
+            ChatMessage(
+                session_id=state.session_id,
+                role="assistant",
+                content=f"assistant turn {i}",
                 created_at=base + timedelta(seconds=i * 2 + 1),
             )
         )
 
     # Star the very first turn — well outside the last-10 window.
-    events = await repository.list_events(session_id, None, 1000)
-    await repository.set_event_starred(session_id, events[0].event_id, True)
+    state.messages[0].starred = True
 
-    history = await orchestrator._conversation_history(session_id)
+    history = orchestrator._conversation_history(state)
 
     # 10 most recent turns + 1 starred turn from outside that window.
     assert len(history) == 11
@@ -458,24 +455,22 @@ async def test_conversation_history_includes_last_ten_plus_starred(tmp_path: Pat
 async def test_conversation_history_dedupes_starred_message_inside_recent_window(
     tmp_path: Path,
 ) -> None:
-    orchestrator, repository = _orchestrator(tmp_path, [])
-    session_id = "s1"
+    orchestrator, _ = _orchestrator(tmp_path, [])
     base = utc_now()
+    state = SessionState(pipeline_name="p")
 
     for i in range(3):
-        await repository.add_event(
-            SessionEvent(
-                session_id=session_id,
-                type=EventType.USER_MESSAGE,
-                source="user",
-                data={"message": f"turn {i}"},
+        state.messages.append(
+            ChatMessage(
+                session_id=state.session_id,
+                role="user",
+                content=f"turn {i}",
                 created_at=base + timedelta(seconds=i),
             )
         )
 
-    events = await repository.list_events(session_id, None, 1000)
-    await repository.set_event_starred(session_id, events[-1].event_id, True)  # already recent
+    state.messages[-1].starred = True  # already recent
 
-    history = await orchestrator._conversation_history(session_id)
+    history = orchestrator._conversation_history(state)
 
     assert len(history) == 3  # not duplicated

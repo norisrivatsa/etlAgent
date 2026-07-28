@@ -4,6 +4,7 @@ from typing import Any
 
 CONNECTOR_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
     "jdbc": {
+        "bulk": ["table", "connection_url", "username", "password"],
         "incrementing": [
             "table",
             "incrementing_column",
@@ -14,6 +15,7 @@ CONNECTOR_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
         "timestamp": [
             "table",
             "timestamp_column",
+            "timezone",
             "connection_url",
             "username",
             "password",

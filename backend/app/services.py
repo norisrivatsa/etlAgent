@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException, status
 
@@ -14,6 +16,7 @@ from app.models import (
     ApprovalRequest,
     ChatMessage,
     ChatMessageList,
+    ConnectorStatus,
     CreateSessionRequest,
     DeployMode,
     DeployRequest,
@@ -21,6 +24,7 @@ from app.models import (
     EventList,
     EventType,
     ModelProvider,
+    PipelineGraph,
     SessionConfig,
     SessionEvent,
     SessionList,
@@ -30,6 +34,7 @@ from app.models import (
     UserMessageRequest,
 )
 from app.orchestrator import Orchestrator
+from app.pipeline_graph import build_pipeline_graph
 from app.repositories import StateRepository
 from app.tools import ToolRegistry
 
@@ -189,53 +194,122 @@ class SessionService:
         )
 
     async def chat_messages(self, session_id: str, limit: int) -> ChatMessageList:
-        """Retrieve chat messages (USER_MESSAGE and AGENT_MESSAGE events) for a session."""
-        await self.get_session(session_id)
-        events = await self.repository.list_events(session_id, None, limit)
-        chat_messages = [
-            message
-            for message in (self._event_to_chat_message(event) for event in events)
-            if message is not None
-        ]
-        return ChatMessageList(messages=chat_messages)
+        """Retrieve human<->planner chat messages for a session, most recent
+        `limit` — stored directly on the session document, see SessionState.messages."""
+        state = await self.get_session(session_id)
+        if not state.messages:
+            await self._backfill_chat_messages(state)
+        messages = await self.repository.list_chat_messages(session_id, limit)
+        return ChatMessageList(messages=messages)
+
+    async def _backfill_chat_messages(self, state: SessionState) -> None:
+        """One-time migration for sessions created before chat moved onto the
+        session document (SessionState.messages) — reconstructs them from the
+        events log so pre-existing chat history doesn't disappear from the UI.
+        No-op (and cheap) for a session that never had any chat, and self-heals
+        exactly once per session since messages are non-empty after this runs."""
+        events = await self.repository.list_events(state.session_id, None, 10_000)
+        backfilled: list[ChatMessage] = []
+        for event in events:
+            if event.type == EventType.USER_MESSAGE:
+                metadata = {"source": event.source}
+                if event.data.get("artifact_id"):
+                    metadata["artifact_id"] = event.data["artifact_id"]
+                    metadata["artifact_name"] = event.data.get("artifact_name", "")
+                backfilled.append(
+                    ChatMessage(
+                        session_id=state.session_id,
+                        role="user",
+                        content=event.data.get("message", ""),
+                        starred=event.starred,
+                        metadata=metadata,
+                        created_at=event.created_at,
+                    )
+                )
+            elif event.type == EventType.AGENT_MESSAGE and event.source == "planner":
+                backfilled.append(
+                    ChatMessage(
+                        session_id=state.session_id,
+                        role="assistant",
+                        content=event.data.get("reply", ""),
+                        starred=event.starred,
+                        metadata={"source": event.source},
+                        created_at=event.created_at,
+                    )
+                )
+        for message in backfilled:
+            await self.repository.add_chat_message(state.session_id, message)
+        state.messages = backfilled
 
     async def star_message(
         self, session_id: str, message_id: str, starred: bool
     ) -> ChatMessage:
         await self.get_session(session_id)
-        event = await self.repository.set_event_starred(session_id, message_id, starred)
-        message = self._event_to_chat_message(event) if event else None
+        message = await self.repository.set_chat_message_starred(session_id, message_id, starred)
         if message is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
         return message
 
+    async def pipeline_graph(self, session_id: str) -> PipelineGraph:
+        """Nodes/edges for the Pipeline Graph view, with live Kafka Connect
+        status merged onto connector nodes — polled by the frontend every 30s."""
+        state = await self.get_session(session_id)
+        nodes, edges = build_pipeline_graph(state)
+        statuses = await self.connector_statuses(state)
+        for node in nodes:
+            if node.type in ("source_connector", "sink_connector"):
+                node.connector_status = statuses.get(node.name)
+        return PipelineGraph(nodes=nodes, edges=edges)
+
+    async def connector_statuses(self, state: SessionState) -> dict[str, ConnectorStatus]:
+        """Live status per committed connector, reduced to the color the graph
+        needs: red (FAILED), green (RUNNING, all tasks healthy), orange
+        (RUNNING, some tasks failed), grey (not deployed yet, or the live
+        lookup itself failed -- e.g. Connect unreachable)."""
+        connector_names = [
+            artifact.name
+            for artifact in state.whiteboard.artifacts
+            if artifact.kind == "connector" and artifact.status == "committed"
+        ]
+        if not connector_names:
+            return {}
+        if state.whiteboard.deployment_status.state != "deployed":
+            return {
+                name: ConnectorStatus(color="grey", detail="not deployed yet")
+                for name in connector_names
+            }
+
+        connect_url = state.config.connect_url or self.settings.connect_url
+        raw_results = await asyncio.gather(
+            *(
+                self.tools.execute("connector_status", connect_url=connect_url, connector_name=name)
+                for name in connector_names
+            ),
+            return_exceptions=True,
+        )
+        statuses: dict[str, ConnectorStatus] = {}
+        for name, raw in zip(connector_names, raw_results):
+            if isinstance(raw, Exception):
+                statuses[name] = ConnectorStatus(color="grey", detail=str(raw))
+            else:
+                statuses[name] = self._reduce_connector_status(raw)
+        return statuses
+
     @staticmethod
-    def _event_to_chat_message(event: SessionEvent) -> ChatMessage | None:
-        if event.type == EventType.USER_MESSAGE:
-            metadata = {"source": event.source}
-            if event.data.get("artifact_id"):
-                metadata["artifact_id"] = event.data["artifact_id"]
-                metadata["artifact_name"] = event.data.get("artifact_name", "")
-            return ChatMessage(
-                message_id=event.event_id,
-                session_id=event.session_id,
-                role="user",
-                content=event.data.get("message", ""),
-                starred=event.starred,
-                metadata=metadata,
-                created_at=event.created_at,
-            )
-        if event.type == EventType.AGENT_MESSAGE and event.source == "planner":
-            return ChatMessage(
-                message_id=event.event_id,
-                session_id=event.session_id,
-                role="assistant",
-                content=event.data.get("reply", ""),
-                starred=event.starred,
-                metadata={"source": event.source},
-                created_at=event.created_at,
-            )
-        return None
+    def _reduce_connector_status(raw: dict[str, Any]) -> ConnectorStatus:
+        connector_state = (raw.get("connector") or {}).get("state", "UNKNOWN")
+        tasks = raw.get("tasks") or []
+        failed_tasks = sum(1 for task in tasks if task.get("state") == "FAILED")
+        total_tasks = len(tasks)
+        if connector_state == "FAILED":
+            color = "red"
+        elif connector_state == "RUNNING":
+            color = "orange" if failed_tasks else "green"
+        else:
+            color = "grey"
+        return ConnectorStatus(
+            color=color, state=connector_state, failed_tasks=failed_tasks, total_tasks=total_tasks
+        )
 
     def _default_session_config(self) -> SessionConfig:
         if self.settings.openai_api_key:

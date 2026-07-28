@@ -17,6 +17,10 @@
   --success-soft: rgba(95, 169, 138, 0.16);
   --error: #d9645b;
   --error-soft: rgba(217, 100, 91, 0.14);
+  --orange: #e08a3c;
+  --orange-soft: rgba(224, 138, 60, 0.18);
+  --rose: #d97b96;
+  --rose-soft: rgba(217, 123, 150, 0.16);
 
   --page-bg: #eae8f4;
   --surface: #f0eff7;
@@ -43,6 +47,10 @@
   --success-soft: rgba(111, 190, 156, 0.2);
   --error: #e8776e;
   --error-soft: rgba(232, 119, 110, 0.18);
+  --orange: #ec9c5c;
+  --orange-soft: rgba(236, 156, 92, 0.22);
+  --rose: #e394ac;
+  --rose-soft: rgba(227, 148, 172, 0.2);
 
   --page-bg: #17152f;
   --surface: #221f45;
@@ -92,6 +100,10 @@
     --success-soft: rgba(111, 190, 156, 0.2);
     --error: #e8776e;
     --error-soft: rgba(232, 119, 110, 0.18);
+    --orange: #ec9c5c;
+    --orange-soft: rgba(236, 156, 92, 0.22);
+    --rose: #e394ac;
+    --rose-soft: rgba(227, 148, 172, 0.2);
 
     --page-bg: #17152f;
     --surface: #221f45;

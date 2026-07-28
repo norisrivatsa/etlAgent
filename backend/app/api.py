@@ -10,6 +10,7 @@ from app.models import (
     CreateSessionRequest,
     DeployRequest,
     EventList,
+    PipelineGraph,
     SessionList,
     SessionMessageResponse,
     SessionState,
@@ -75,6 +76,14 @@ async def get_session(session_id: str, service: Service) -> SessionState:
 @router.get("/sessions/{session_id}/whiteboard", response_model=Whiteboard)
 async def get_whiteboard(session_id: str, service: Service) -> Whiteboard:
     return (await service.get_session(session_id)).whiteboard
+
+
+@router.get("/sessions/{session_id}/pipeline-graph", response_model=PipelineGraph)
+async def get_pipeline_graph(session_id: str, service: Service) -> PipelineGraph:
+    """Nodes (source/sink connectors, topics, ksqlDB streams/tables) and edges
+    for the Pipeline Graph view, with live Kafka Connect status on connector
+    nodes. Meant to be polled periodically (every ~30s) by the frontend."""
+    return await service.pipeline_graph(session_id)
 
 
 @router.get("/sessions/{session_id}/events", response_model=EventList)

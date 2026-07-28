@@ -11,6 +11,7 @@ from pymongo import ASCENDING, ReturnDocument
 from app.models import (
     AgentMessage,
     AgentTask,
+    ChatMessage,
     SessionEvent,
     SessionState,
     utc_now,
@@ -34,13 +35,19 @@ class StateRepository(Protocol):
     async def unread_messages(
         self, session_id: str, recipient: str
     ) -> list[AgentMessage]: ...
+    async def add_chat_message(
+        self, session_id: str, message: ChatMessage
+    ) -> ChatMessage: ...
+    async def list_chat_messages(
+        self, session_id: str, limit: int | None = None
+    ) -> list[ChatMessage]: ...
+    async def set_chat_message_starred(
+        self, session_id: str, message_id: str, starred: bool
+    ) -> ChatMessage | None: ...
     async def add_event(self, event: SessionEvent) -> SessionEvent: ...
     async def list_events(
         self, session_id: str, after: datetime | None = None, limit: int = 100
     ) -> list[SessionEvent]: ...
-    async def set_event_starred(
-        self, session_id: str, event_id: str, starred: bool
-    ) -> SessionEvent | None: ...
 
 
 def _dump(model: Any) -> dict[str, Any]:
@@ -148,6 +155,40 @@ class MongoStateRepository:
             )
         return [AgentMessage.model_validate(doc) for doc in docs]
 
+    async def add_chat_message(self, session_id: str, message: ChatMessage) -> ChatMessage:
+        await self.sessions.update_one(
+            {"session_id": session_id},
+            {"$push": {"messages": _dump(message)}, "$set": {"updated_at": utc_now()}},
+        )
+        return message
+
+    async def list_chat_messages(
+        self, session_id: str, limit: int | None = None
+    ) -> list[ChatMessage]:
+        doc = await self.sessions.find_one(
+            {"session_id": session_id}, {"_id": 0, "messages": 1}
+        )
+        if not doc:
+            return []
+        messages = sorted(
+            (ChatMessage.model_validate(item) for item in doc.get("messages", [])),
+            key=lambda message: message.created_at,
+        )
+        return messages[-limit:] if limit else messages
+
+    async def set_chat_message_starred(
+        self, session_id: str, message_id: str, starred: bool
+    ) -> ChatMessage | None:
+        doc = await self.sessions.find_one_and_update(
+            {"session_id": session_id, "messages.message_id": message_id},
+            {"$set": {"messages.$.starred": starred, "updated_at": utc_now()}},
+            projection={"_id": 0, "messages.$": 1},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not doc or not doc.get("messages"):
+            return None
+        return ChatMessage.model_validate(doc["messages"][0])
+
     async def add_event(self, event: SessionEvent) -> SessionEvent:
         await self.events.insert_one(_dump(event))
         return event
@@ -164,17 +205,6 @@ class MongoStateRepository:
             .limit(limit)
         )
         return [SessionEvent.model_validate(doc) async for doc in cursor]
-
-    async def set_event_starred(
-        self, session_id: str, event_id: str, starred: bool
-    ) -> SessionEvent | None:
-        doc = await self.events.find_one_and_update(
-            {"session_id": session_id, "event_id": event_id},
-            {"$set": {"starred": starred}},
-            projection={"_id": 0},
-            return_document=ReturnDocument.AFTER,
-        )
-        return SessionEvent.model_validate(doc) if doc else None
 
 
 class InMemoryStateRepository:
@@ -262,6 +292,35 @@ class InMemoryStateRepository:
                 found.append(deepcopy(message))
         return found
 
+    async def add_chat_message(self, session_id: str, message: ChatMessage) -> ChatMessage:
+        state = self.sessions.get(session_id)
+        if state:
+            state.messages.append(deepcopy(message))
+            state.updated_at = utc_now()
+        return deepcopy(message)
+
+    async def list_chat_messages(
+        self, session_id: str, limit: int | None = None
+    ) -> list[ChatMessage]:
+        state = self.sessions.get(session_id)
+        if not state:
+            return []
+        messages = sorted(state.messages, key=lambda message: message.created_at)
+        return deepcopy(messages[-limit:] if limit else messages)
+
+    async def set_chat_message_starred(
+        self, session_id: str, message_id: str, starred: bool
+    ) -> ChatMessage | None:
+        state = self.sessions.get(session_id)
+        if not state:
+            return None
+        for index, message in enumerate(state.messages):
+            if message.message_id == message_id:
+                updated = message.model_copy(update={"starred": starred})
+                state.messages[index] = updated
+                return deepcopy(updated)
+        return None
+
     async def add_event(self, event: SessionEvent) -> SessionEvent:
         self.events.append(deepcopy(event))
         return deepcopy(event)
@@ -276,13 +335,3 @@ class InMemoryStateRepository:
             and (after is None or event.created_at > after)
         ]
         return sorted(found, key=lambda event: event.created_at)[:limit]
-
-    async def set_event_starred(
-        self, session_id: str, event_id: str, starred: bool
-    ) -> SessionEvent | None:
-        for index, event in enumerate(self.events):
-            if event.session_id == session_id and event.event_id == event_id:
-                updated = event.model_copy(update={"starred": starred})
-                self.events[index] = updated
-                return deepcopy(updated)
-        return None

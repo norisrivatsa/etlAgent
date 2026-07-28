@@ -158,31 +158,43 @@ export function deriveStageProgress(session) {
 
 // -- Edge geometry ---------------------------------------------------------
 
-export function edgePath(a, b) {
-  const x1 = a.x + a.w / 2
-  const y1 = a.y + a.h / 2
-  const x2Center = b.x + b.w / 2
-  const y2Center = b.y + b.h / 2
-  // Pull the endpoint back from the target's center to just outside its
-  // rectangular border (not a circular approximation — a fixed radius isn't
-  // enough to clear a wide/short card on a diagonal approach, which left the
-  // endpoint, and any arrowhead marker on it, rendered UNDER the node's
-  // opaque background instead of next to it), so it's actually visible.
-  const ddx = x1 - x2Center
-  const ddy = y1 - y2Center
-  const halfW = b.w / 2
-  const halfH = b.h / 2
-  const scaleX = ddx !== 0 ? halfW / Math.abs(ddx) : Infinity
-  const scaleY = ddy !== 0 ? halfH / Math.abs(ddy) : Infinity
+// Point on `node`'s rectangular boundary (not a circular approximation — a
+// fixed radius isn't enough to clear a wide/short card on a diagonal
+// approach) closest to the line from its center toward (towardX, towardY),
+// pulled `gap`px further out so the endpoint (and any arrowhead marker on
+// it) renders just outside the node instead of on its edge.
+function boundaryPoint(node, towardX, towardY) {
+  const centerX = node.x + node.w / 2
+  const centerY = node.y + node.h / 2
+  const dx = towardX - centerX
+  const dy = towardY - centerY
+  const halfW = node.w / 2
+  const halfH = node.h / 2
+  const scaleX = dx !== 0 ? halfW / Math.abs(dx) : Infinity
+  const scaleY = dy !== 0 ? halfH / Math.abs(dy) : Infinity
   const scale = Math.min(scaleX, scaleY)
-  const boundaryX = x2Center + ddx * scale
-  const boundaryY = y2Center + ddy * scale
-  const dist = Math.hypot(ddx, ddy) || 1
+  const dist = Math.hypot(dx, dy) || 1
   const gap = 6
-  const x2 = boundaryX + (ddx / dist) * gap
-  const y2 = boundaryY + (ddy / dist) * gap
-  const midX = (x1 + x2) / 2
-  return `M ${x1} ${y1} C ${midX} ${y1} ${midX} ${y2} ${x2} ${y2}`
+  return {
+    x: centerX + dx * scale + (dx / dist) * gap,
+    y: centerY + dy * scale + (dy / dist) * gap,
+  }
+}
+
+export function edgePath(a, b) {
+  const aCenterX = a.x + a.w / 2
+  const aCenterY = a.y + a.h / 2
+  const bCenterX = b.x + b.w / 2
+  const bCenterY = b.y + b.h / 2
+  // Pull BOTH endpoints back to their own node's boundary, not just the
+  // target's — a source left at dead-center only looked fine by accident on
+  // opaque node backgrounds; with a translucent/soft fill (e.g. the Pipeline
+  // Graph's type/status colors) the segment from center to edge shows
+  // through, making the line look like it starts from inside the node.
+  const start = boundaryPoint(a, bCenterX, bCenterY)
+  const end = boundaryPoint(b, aCenterX, aCenterY)
+  const midX = (start.x + end.x) / 2
+  return `M ${start.x} ${start.y} C ${midX} ${start.y} ${midX} ${end.y} ${end.x} ${end.y}`
 }
 
 // -- Node state derivation from SessionEvent[] ------------------------------
